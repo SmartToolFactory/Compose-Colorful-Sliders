@@ -2,28 +2,42 @@ package com.smarttoolfactory.slider
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.requiredSizeIn
 import androidx.compose.material.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PointMode
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.coerceAtLeast
+import kotlinx.coroutines.launch
 
 /**
  * Material Slider allows to choose height for track and thumb radius and selection between
@@ -133,6 +147,7 @@ fun ColorfulIconSlider(
     borderStroke: BorderStroke? = null,
     drawInactiveTrack: Boolean = true,
     coerceThumbInTrack: Boolean = false,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
     thumb: @Composable () -> Unit
 ) {
 
@@ -181,8 +196,21 @@ fun ColorfulIconSlider(
         fun scaleToOffset(userValue: Float) =
             scale(valueRange.start, valueRange.endInclusive, userValue, trackStart, trackEnd)
 
+        val scope = rememberCoroutineScope()
         val rawOffset = remember { mutableStateOf(scaleToOffset(value)) }
+        val pressOffset = remember { mutableStateOf(0f) }
 
+        val draggableState = remember(trackStart, trackEnd, valueRange) {
+            SliderDraggableState {
+                rawOffset.value = (rawOffset.value + it + pressOffset.value)
+                pressOffset.value = 0f
+                val offsetInTrack = rawOffset.value.coerceIn(trackStart, trackEnd)
+                onValueChangeState.value.invoke(
+                    scaleToUserValue(offsetInTrack),
+                    Offset(rawOffset.value.coerceIn(trackStart, trackEnd), strokeRadius)
+                )
+            }
+        }
         CorrectValueSideEffect(
             ::scaleToOffset,
             valueRange,
@@ -194,43 +222,42 @@ fun ColorfulIconSlider(
         val coerced = value.coerceIn(valueRange.start, valueRange.endInclusive)
         val fraction = calculateFraction(valueRange.start, valueRange.endInclusive, coerced)
 
-        val dragModifier = Modifier
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDrag = { change: PointerInputChange, _: Offset ->
-                        if (enabled) {
-                            rawOffset.value =
-                                if (!isRtl) change.position.x else trackEnd - change.position.x
-                            val offsetInTrack = rawOffset.value.coerceIn(trackStart, trackEnd)
-                            onValueChangeState.value.invoke(
-                                scaleToUserValue(offsetInTrack),
-                                Offset(rawOffset.value.coerceIn(trackStart, trackEnd), strokeRadius)
-                            )
-                        }
-
-                    },
-                    onDragEnd = {
-                        if (enabled) {
-                            onValueChangeFinished?.invoke()
-                        }
-                    }
-                )
-            }
-            .pointerInput(Unit) {
-                detectTapGestures { position: Offset ->
-                    if (enabled) {
-                        rawOffset.value =
-                            if (!isRtl) position.x else trackEnd - position.x
-                        val offsetInTrack = rawOffset.value.coerceIn(trackStart, trackEnd)
-                        onValueChangeState.value.invoke(
-                            scaleToUserValue(offsetInTrack),
-                            Offset(rawOffset.value.coerceIn(trackStart, trackEnd), strokeRadius)
-                        )
-                        onValueChangeFinished?.invoke()
-                    }
+        val gestureEndAction = rememberUpdatedState<(Float) -> Unit> { velocity: Float ->
+            val current = rawOffset.value
+            val target = snapValueToTick(current, tickFractions, trackStart, trackEnd)
+            if (current != target) {
+                scope.launch {
+                    animateToTarget(draggableState, current, target, velocity)
+                    onValueChangeFinished?.invoke()
                 }
+            } else if (!draggableState.isDragging) {
+                // check ifDragging in case the change is still in progress (touch -> drag case)
+                onValueChangeFinished?.invoke()
             }
-
+        }
+        val press = Modifier.sliderTapModifier(
+            draggableState = draggableState,
+            interactionSource = interactionSource,
+            maxPx = constraints.maxWidth.toFloat(),
+            isRtl = isRtl,
+            rawOffset = rawOffset,
+            gestureEndAction = gestureEndAction,
+            pressOffset = pressOffset,
+            enabled = enabled
+        )
+        val drag = Modifier.draggable(
+            orientation = Orientation.Horizontal,
+            reverseDirection = isRtl,
+            enabled = enabled,
+            interactionSource = interactionSource,
+            onDragStopped = { _ ->
+                if (enabled) {
+                    onValueChangeFinished?.invoke()
+                }
+            },
+            startDragImmediately = draggableState.isDragging,
+            state = draggableState
+        )
         IconSliderImpl(
             enabled = enabled,
             fraction = fraction,
@@ -245,9 +272,8 @@ fun ColorfulIconSlider(
             coerceThumbInTrack = coerceThumbInTrack,
             drawInactiveTrack = drawInactiveTrack,
             borderStroke = borderStroke,
-            modifier = dragModifier
+            modifier = press.then(drag)
         )
-
     }
 }
 
@@ -389,13 +415,15 @@ private fun Track(
         )
 
         // InActive Track
-        drawLine(
-            brush = inactiveTrackColor,
-            start = sliderStart,
-            end = sliderEnd,
-            strokeWidth = trackHeight,
-            cap = StrokeCap.Round
-        )
+        if (drawInactiveTrack) {
+            drawLine(
+                brush = inactiveTrackColor,
+                start = sliderStart,
+                end = sliderEnd,
+                strokeWidth = trackHeight,
+                cap = StrokeCap.Round
+            )
+        }
 
         // Active Track
         drawLine(
