@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.runtime.Composable
@@ -11,13 +14,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.google.accompanist.pager.*
 import com.smarttoolfactory.composematerialslider.demo.*
 import com.smarttoolfactory.composematerialslider.ui.theme.BlueSmartDark
 import com.smarttoolfactory.composematerialslider.ui.theme.ComposeMaterialSliderTheme
 import kotlinx.coroutines.launch
 
-@ExperimentalPagerApi
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,12 +37,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@ExperimentalPagerApi
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
 private fun HomeContent() {
 
-    val pagerState: PagerState = rememberPagerState(initialPage = 0)
+    val pagerState: PagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { tabList.size }
+    )
     val coroutineScope = rememberCoroutineScope()
 
     ScrollableTabRow(
@@ -67,10 +70,7 @@ private fun HomeContent() {
         }
     }
 
-    HorizontalPager(
-        state = pagerState,
-        count = tabList.size
-    ) { page: Int ->
+    HorizontalPager(state = pagerState) { page: Int ->
 
         when (page) {
             0 -> ColorfulSliderDemo()
@@ -92,4 +92,3 @@ internal val tabList =
         "Slider Gradients1",
         "Slider Gradients2",
     )
-

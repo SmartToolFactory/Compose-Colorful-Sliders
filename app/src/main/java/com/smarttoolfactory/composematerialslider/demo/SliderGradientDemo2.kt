@@ -37,6 +37,7 @@ fun SliderGradientDemo2() {
         HSVSliderExamples(modifier, sliderModifier)
         HSLSliderExamples(modifier, sliderModifier)
         RGBSliderExamples(modifier, sliderModifier)
+
     }
 }
 
